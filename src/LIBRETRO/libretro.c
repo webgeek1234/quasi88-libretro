@@ -26,6 +26,7 @@
 INT16 *finalmix;
 int samples_this_frame;
 
+#include "disks.h"
 #include "filename.h"
 char *save_path = NULL;
 bool save_to_disk_image = false;
@@ -45,12 +46,19 @@ static retro_video_refresh_t video_cb;
 static const struct retro_subsystem_rom_info pc88_disk[] = {
    { "Disk 1", "d88", true, false, true, NULL, 1 },
    { "Disk 2", "d88", true, false, true, NULL, 1 },
+   { "Disk 3", "d88", true, false, true, NULL, 1 },
+   { "Disk 4", "d88", true, false, true, NULL, 1 },
+   { "Disk 5", "d88", true, false, true, NULL, 1 },
+   { "Disk 6", "d88", true, false, true, NULL, 1 },
    { NULL }
 };
 
 static const struct retro_subsystem_info subsystems[] = {
    { "2-Disk Game", "pc88_2_disk", pc88_disk, 2, 0x0101 },
-   /* { "Tape", "pc88_tape", pc88_tape, 2, 0x0102 }, TODO */
+   { "3-Disk Game", "pc88_3_disk", pc88_disk, 3, 0x0102 },
+   { "4-Disk Game", "pc88_4_disk", pc88_disk, 4, 0x0103 },
+   { "5-Disk Game", "pc88_5_disk", pc88_disk, 5, 0x0104 },
+   { "6-Disk Game", "pc88_6_disk", pc88_disk, 6, 0x0105 },
    { NULL }
 };
 
@@ -132,6 +140,54 @@ void handle_input()
    handle_pad(KEY88_G,      RETRO_DEVICE_ID_JOYPAD_RIGHT,  1);
    handle_pad(KEY88_TAB,    RETRO_DEVICE_ID_JOYPAD_A,      1);
    handle_pad(KEY88_Q,      RETRO_DEVICE_ID_JOYPAD_B,      1);
+
+   /* Disk swapping */
+   if (input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L))
+   {
+      if (input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_RIGHT) && !pad_buffer[RETRO_DEVICE_ID_JOYPAD_RIGHT])
+      {
+         retro_disks_cycle(environ_cb, true);
+         pad_buffer[RETRO_DEVICE_ID_JOYPAD_RIGHT] = true;
+      }
+      else if (input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT) && !pad_buffer[RETRO_DEVICE_ID_JOYPAD_LEFT])
+      {
+         retro_disks_cycle(environ_cb, false);
+         pad_buffer[RETRO_DEVICE_ID_JOYPAD_LEFT] = true;
+      }
+      else if (!pad_buffer[RETRO_DEVICE_ID_JOYPAD_L])
+      {
+         retro_disks_start(environ_cb, true);
+         pad_buffer[RETRO_DEVICE_ID_JOYPAD_L] = true;
+      }
+      else if (!input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_RIGHT) && !input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT))
+      {
+         pad_buffer[RETRO_DEVICE_ID_JOYPAD_LEFT] = false;
+         pad_buffer[RETRO_DEVICE_ID_JOYPAD_RIGHT] = false;
+      }
+   }
+   else if (input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R))
+   {
+      if (input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_RIGHT) && !pad_buffer[RETRO_DEVICE_ID_JOYPAD_RIGHT])
+      {
+         retro_disks_cycle(environ_cb, true);
+         pad_buffer[RETRO_DEVICE_ID_JOYPAD_RIGHT] = true;
+      }
+      else if (input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT) && !pad_buffer[RETRO_DEVICE_ID_JOYPAD_LEFT])
+      {
+         retro_disks_cycle(environ_cb, false);
+         pad_buffer[RETRO_DEVICE_ID_JOYPAD_LEFT] = true;
+      }
+      else if (!pad_buffer[RETRO_DEVICE_ID_JOYPAD_R])
+      {
+         retro_disks_start(environ_cb, false);
+         pad_buffer[RETRO_DEVICE_ID_JOYPAD_R] = true;
+      }
+      else if (!input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_RIGHT) && !input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT))
+      {
+         pad_buffer[RETRO_DEVICE_ID_JOYPAD_LEFT] = false;
+         pad_buffer[RETRO_DEVICE_ID_JOYPAD_RIGHT] = false;
+      }
+   }
    
    /* Basics, numbers */
    for (i = 0; i < 64; i++)
@@ -439,7 +495,10 @@ bool retro_load_game(const struct retro_game_info *info)
    quasi88_start();
    quasi88_disk_eject_all();
    if (info && !string_is_empty(info->path))
-      quasi88_disk_insert(DRIVE_1, info->path, 0, 0);
+   {
+      retro_disks_append(info->path);
+      retro_disks_set(0, 0);
+   }
    quasi88_reset(NULL);
    quasi88_exec();
    
@@ -448,13 +507,22 @@ bool retro_load_game(const struct retro_game_info *info)
 
 bool retro_load_game_special(unsigned type, const struct retro_game_info *info, size_t num_info)
 {
-   if (num_info == 2)
+   if (num_info != 0)
    {
-      if (!retro_load_game(&info[0]))
-         return false;
-      if (!string_is_empty(info[1].path))
-         quasi88_disk_insert(DRIVE_2, info[1].path, 0, 0);
+      uint8_t i;
+
+      init_variables();
+      quasi88_start();
+      quasi88_disk_eject_all();
+      retro_disks_init();
+      for (i = 0; i < num_info; i++)
+         if (!string_is_empty(info[i].path))
+            retro_disks_append(info[i].path);
+      retro_disks_set(0, 0);
+      retro_disks_set(1, 1);
       quasi88_reset(NULL);
+      quasi88_exec();
+
       return true;
    }
  
